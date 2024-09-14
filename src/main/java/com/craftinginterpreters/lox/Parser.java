@@ -56,9 +56,13 @@ public class Parser {
 	 * logic_or       → logic_and ( "or" logic_and )* ;
 	 * logic_and      → equality ( "and" equality )* ;
 	 *
+	 * REVISIED:
+	 * assignment     → ( call "." )? IDENTIFIER "=" assignment
+	 *                | logic_or ;
 	 * @return
 	 */
 	private Expr assignment() {
+
 		Expr expr = or();
 		if(match(EQUAL)) {
 			Token equals = previous();
@@ -67,6 +71,9 @@ public class Parser {
 			if(expr instanceof  Expr.Variable) {
 				Token name = ((Expr.Variable) expr).name;
 				return new Expr.Assign(name, value);
+			} else if(expr instanceof Expr.Get) {
+				Expr.Get get = (Expr.Get) expr;
+				return new Expr.Set(get.object, get.name, value);
 			}
 			error(equals, "Invalid assignment target.");
 		}
@@ -103,13 +110,15 @@ public class Parser {
 	}
 
 	/**
-	 * declaration    → funDecl
+	 * declaration    →classDecl
+	 * 				  |funDecl
 	 *                | varDecl
 	 *                | statement ;
 	 * @return
 	 */
 	private Stmt declaration() {
 		try {
+			if(match(CLASS)) return classDeclaration();
 			if(match(FUN)) return function("function");
 			if (match(VAR)) return varDeclaration();
 			return statement();
@@ -117,6 +126,33 @@ public class Parser {
 			synchronize();
 			return null;
 		}
+	}
+
+	/**
+	 * classDecl      → "class" IDENTIFIER "{" function* "}" ;
+	 *
+	 * classDecl      → "class" IDENTIFIER ( "<" IDENTIFIER )?
+	 *                  "{" function* "}" ;
+	 * @return
+	 */
+	private Stmt classDeclaration() {
+		Token name = consume(IDENTIFIER, "Except class name.");
+
+		Expr.Variable superclass = null;
+		if(match(LESS)) {
+			consume(IDENTIFIER, "Expect superclass name.");
+			superclass = new Expr.Variable(previous());
+		}
+
+		consume(LEFT_BRACE, "Expect '{' before class body");
+
+		List<Stmt.Function> methods = new ArrayList<>();
+		while(!check(RIGHT_BRACE) && isAtEnd()) {
+			methods.add(function("method"));
+		}
+		consume(RIGHT_BRACE, "Expect '}' after class body");
+
+		return new Stmt.Class(name, superclass, methods);
 	}
 
 	private Stmt varDeclaration() {
@@ -364,7 +400,11 @@ public class Parser {
 		while(true) {
 			if(match(LEFT_PAREN)) {
 				expr = finishCall(expr);
-			} else {
+			} else if(match(DOT)) {
+				Token name = consume(IDENTIFIER, "Expect property name after '.'");
+				expr = new Expr.Get(expr, name);
+			}
+			else {
 				break;
 			}
 		}
@@ -390,6 +430,10 @@ public class Parser {
 	/**
 	 * primary        → NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" ;
 	 *
+	 * primary        → "true" | "false" | "nil" | "this"
+	 *                | NUMBER | STRING | IDENTIFIER | "(" expression ")"
+	 *                | "super" "." IDENTIFIER ;
+	 *
 	 * @return
 	 */
 	private Expr primary() {
@@ -402,6 +446,16 @@ public class Parser {
 
 		if (match(NUMBER, STRING)) {
 			return new Expr.Literal(previous().literal);
+		}
+		if(match(SUPER)) {
+			Token keyword = previous();
+			consume(DOT, "Expect . after 'super'");
+			Token method = consume(IDENTIFIER, "Expect superclass method name.");
+
+			return new Expr.Super(keyword, method);
+		}
+		if(match(THIS)) {
+			return 	new Expr.This(previous());
 		}
 		if(match(IDENTIFIER)) {
 			return new Expr.Variable(previous());
